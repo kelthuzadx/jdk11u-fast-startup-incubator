@@ -24,7 +24,9 @@
 
 #include "precompiled.hpp"
 #include "jvm.h"
+#include "classfile/classFileStream.hpp"
 #include "classfile/classLoader.inline.hpp"
+#include "classfile/classLoaderData.inline.hpp"
 #include "classfile/classLoaderExt.hpp"
 #include "classfile/stringTable.hpp"
 #include "classfile/symbolTable.hpp"
@@ -196,7 +198,7 @@ void FileMapHeader::populate(FileMapInfo* mapinfo, size_t alignment) {
   _shared_path_table_size = mapinfo->_shared_path_table_size;
   _shared_path_table = mapinfo->_shared_path_table;
   _shared_path_entry_size = mapinfo->_shared_path_entry_size;
-  if (MetaspaceShared::is_heap_object_archiving_allowed()) {
+  if (HeapShared::is_heap_object_archiving_allowed()) {
     _heap_reserved = Universe::heap()->reserved_region();
   }
 
@@ -746,7 +748,7 @@ size_t FileMapInfo::write_archive_heap_regions(GrowableArray<MemRegion> *heap_me
   int arr_len = heap_mem == NULL ? 0 : heap_mem->length();
   if(arr_len > max_num_regions) {
     fail_stop("Unable to write archive heap memory regions: "
-              "number of memory regions exceeds maximum due to fragmentation");
+              "number of memory regions exceeds maximum due to fragmentation. ");
   }
 
   size_t total_size = 0;
@@ -981,7 +983,7 @@ MemRegion FileMapInfo::get_heap_regions_range_with_current_oop_encoding_mode() {
 // regions may be added. GC may mark and update references in the mapped
 // open archive objects.
 void FileMapInfo::map_heap_regions_impl() {
-  if (!MetaspaceShared::is_heap_object_archiving_allowed()) {
+  if (!HeapShared::is_heap_object_archiving_allowed()) {
     log_info(cds)("CDS heap data is being ignored. UseG1GC, "
                   "UseCompressedOops and UseCompressedClassPointers are required.");
     return;
@@ -1086,7 +1088,7 @@ void FileMapInfo::map_heap_regions_impl() {
                       MetaspaceShared::max_open_archive_heap_region,
                       &num_open_archive_heap_ranges,
                       true /* open */)) {
-      MetaspaceShared::set_open_archive_heap_region_mapped();
+      HeapShared::set_open_archive_heap_region_mapped();
     }
   }
 }
@@ -1100,7 +1102,7 @@ void FileMapInfo::map_heap_regions() {
     assert(string_ranges == NULL && num_string_ranges == 0, "sanity");
   }
 
-  if (!MetaspaceShared::open_archive_heap_region_mapped()) {
+  if (!HeapShared::open_archive_heap_region_mapped()) {
     assert(open_archive_heap_ranges == NULL && num_open_archive_heap_ranges == 0, "sanity");
   }
 }
@@ -1247,7 +1249,7 @@ bool FileMapInfo::verify_region_checksum(int i) {
   if ((MetaspaceShared::is_string_region(i) &&
        !StringTable::shared_string_mapped()) ||
       (MetaspaceShared::is_open_archive_heap_region(i) &&
-       !MetaspaceShared::open_archive_heap_region_mapped())) {
+       !HeapShared::open_archive_heap_region_mapped())) {
     return true; // archived heap data is not mapped
   }
   const char* buf = region_addr(i);
@@ -1490,7 +1492,7 @@ ClassPathEntry* FileMapInfo::get_classpath_entry_for_jvmti(int i, TRAPS) {
   return ent;
 }
 
-ClassFileStream* FileMapInfo::open_stream_for_jvmti(InstanceKlass* ik, TRAPS) {
+ClassFileStream* FileMapInfo::open_stream_for_jvmti(InstanceKlass* ik, Handle class_loader, TRAPS) {
   int path_index = ik->shared_classpath_index();
   assert(path_index >= 0, "should be called for shared built-in classes only");
   assert(path_index < (int)_shared_path_table_size, "sanity");
@@ -1502,7 +1504,12 @@ ClassFileStream* FileMapInfo::open_stream_for_jvmti(InstanceKlass* ik, TRAPS) {
   const char* const class_name = name->as_C_string();
   const char* const file_name = ClassLoader::file_name_for_class_name(class_name,
                                                                       name->utf8_length());
-  return cpe->open_stream(file_name, THREAD);
+  ClassLoaderData* loader_data = ClassLoaderData::class_loader_data(class_loader());
+  ClassFileStream* cfs = cpe->open_stream_for_loader(file_name, loader_data, THREAD);
+  assert(cfs != NULL, "must be able to read the classfile data of shared classes for built-in loaders.");
+  log_debug(cds, jvmti)("classfile data for %s [%d: %s] = %d bytes", class_name, path_index,
+                        cfs->source(), cfs->length());
+  return cfs;
 }
 
 #endif
