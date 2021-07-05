@@ -167,6 +167,7 @@ jobs:
 
       - name: Install dependencies
         run: |
+          sudo apt-add-repository -yu 'deb http://ppa.launchpad.net/ubuntu-toolchain-r/test/ubuntu xenial main'
           sudo apt-get update
           sudo apt-get install gcc-4.8 g++-4.8 libxrandr-dev libxtst-dev libcups2-dev libasound2-dev
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 50
