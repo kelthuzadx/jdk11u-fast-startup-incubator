@@ -179,7 +179,7 @@ jobs:
           --with-version-opt=${GITHUB_ACTOR}-${GITHUB_SHA}
           --with-version-build=0
           --with-boot-jdk=${HOME}/bootjdk/${BOOT_JDK_VERSION}
-          --with-jtreg=${HOME}/jtreg
+          --with-jtreg=${HOME}/jtreg/bin/jtreg
           --with-default-make-target="product-bundles test-bundles"
           --with-zlib=system
           --enable-jtreg-failure-handler
