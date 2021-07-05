@@ -172,7 +172,7 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10
 
       - name: CXXonfigure
-        run: "ls -l /home/runner/jtreg"
+        run: "ls -l /home/runner/jtreg/bin"
   
       - name: Configure
         run: >
