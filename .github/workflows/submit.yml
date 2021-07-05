@@ -89,6 +89,9 @@ jobs:
         run: mv build/images/jtreg ~/
         working-directory: jtreg
         if: steps.check_submit.outputs.should_run != 'false' && steps.jtreg.outputs.cache-hit != 'true'
+      
+      - name: Set JTREG permission
+        run: chmod -R 777 ~/jtreg/
 
       - name: Store jtreg for use by later steps
         uses: actions/upload-artifact@v2
