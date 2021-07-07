@@ -635,8 +635,12 @@ jobs:
           sudo dpkg --add-architecture i386
           sudo apt-get update
           sudo apt-get install --only-upgrade apt
-          sudo apt-get install gcc-10-multilib g++-10-multilib libfreetype6-dev:i386 libxrandr-dev:i386 libxtst-dev:i386 libtiff-dev:i386 libcupsimage2-dev:i386 libcups2-dev:i386 libasound2-dev:i386
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10
+          sudo apt-get install gcc-4.8:i386 g++-4.8:i386 libfreetype6-dev:i386 libxrandr-dev:i386 libxtst-dev:i386 libtiff-dev:i386 libcupsimage2-dev:i386 libcups2-dev:i386 libasound2-dev:i386
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-4.8 50
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-4.8 50
+
+      - name: Set JTREG permission
+        run: chmod -R 777 ~/jtreg/
 
       - name: Configure
         run: >
