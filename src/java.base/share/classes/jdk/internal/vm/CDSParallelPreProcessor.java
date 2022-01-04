@@ -24,9 +24,7 @@
  */
 package jdk.internal.vm;
 
-import java.io.IOException;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -35,11 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Support loading and pre-processing classes in parallel at CDS dump time.
- *
+ * <p>
  * CDS dumping involves a parallel phase and a non-parallel phase. The static
  * CDSParallelPreProcessor.preLoadAndProcess() method is invoked by the VM to
  * enter the parallel phase.
- *
+ * <p>
  * During the parallel phase, the classlist is split into a number of sublists
  * according to DumpWithParallelism value and processed parallelly in different
  * tasks. Classes on the list are loaded but not explicitly initialized, and
@@ -56,18 +54,6 @@ public class CDSParallelPreProcessor {
 
     static void updateClassCount(int num) {
         classCount.getAndAdd(num);
-    }
-
-    private static class SubListProcessor implements Runnable {
-        List<String> classList;
-        SubListProcessor(List<String> list) {
-            classList = list;
-        }
-
-        @Override
-        public void run() {
-            updateClassCount(processSubList(classList));
-        }
     }
 
     // Read the 'classListFile' and split the list into a number of sublists
@@ -116,20 +102,92 @@ public class CDSParallelPreProcessor {
         int totalClassCount = classesToLoad.size();
         int remainingClasses = totalClassCount - nextIndex;
         for (;
-            remainingClasses > 0 && remainingThreads > 0;
-            remainingClasses = totalClassCount - nextIndex) {
-          int sublistStartIndex = nextIndex;
-          int splitSize = (int) Math.max(1, remainingClasses / (double) remainingThreads);
-          nextIndex += splitSize;
-          // Find the index of the next non-inner class.
-          for (;
-              nextIndex < totalClassCount && classesToLoad.get(nextIndex).indexOf('$') != -1;
-              nextIndex++) {}
-          List<String> subList = classesToLoad.subList(sublistStartIndex, nextIndex);
-          returnList.add(subList);
-          remainingThreads--;
+             remainingClasses > 0 && remainingThreads > 0;
+             remainingClasses = totalClassCount - nextIndex) {
+            int sublistStartIndex = nextIndex;
+            int splitSize = (int) Math.max(1, remainingClasses / (double) remainingThreads);
+            nextIndex += splitSize;
+            // Find the index of the next non-inner class.
+            for (;
+                 nextIndex < totalClassCount && classesToLoad.get(nextIndex).indexOf('$') != -1;
+                 nextIndex++) {
+            }
+            List<String> subList = classesToLoad.subList(sublistStartIndex, nextIndex);
+            returnList.add(subList);
+            remainingThreads--;
         }
         return returnList;
+    }
+
+    static boolean isNumeric(String str) {
+        try {
+            Integer.parseInt(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    // This function is used for loading classes for customized class loaders
+    // during archive dumping.
+    static boolean loadClassFromSource(CDSClassListLine info) {
+        if (info.superId == CDSClassListLine.INVALID_ID) {
+            throw new RuntimeException("If source location is specified, super class must be also specified");
+        }
+        if (info.thisId == CDSClassListLine.INVALID_ID) {
+            throw new RuntimeException("If source location is specified, id must be also specified");
+        }
+        if (info.className.startsWith("java/")) {
+            System.out.printf("Prohibited package for non-bootstrap classes: %s.class from %s\n", info.className, info.source);
+            return false;
+        }
+        preProcessClassWithSource(info.className, info.source, info.interfaces.size());
+        return true;
+    }
+
+    static CDSClassListLine parseClassListLine(String line) {
+        line = line.strip();
+        if (line.startsWith("#")) {
+            // Line starts with '#' is treated as comment and is ignored.
+            return null;
+        } else if (line.startsWith("[")) {
+            // Array is not support in classlist.
+            System.out.println("Preload Warning: Cannot find " + line);
+            return null;
+        } else {
+            // Otherwise, it's a instance klass
+            String[] tokens = line.split(" ");
+            if (tokens.length < 1) {
+                throw new RuntimeException("class name is absent");
+            }
+            try {
+                int tokenCnt = 0;
+                CDSClassListLine info = new CDSClassListLine();
+                info.className = tokens[tokenCnt++];
+                info.className = info.className.replace('/', '.');
+                while (tokenCnt < tokens.length) {
+                    if ("id:".equals(tokens[tokenCnt])) {
+                        info.thisId = Integer.parseInt(tokens[++tokenCnt]);
+                    } else if ("super:".equals(tokens[tokenCnt])) {
+                        info.superId = Integer.parseInt(tokens[++tokenCnt]);
+                    } else if ("interfaces:".equals(tokens[tokenCnt])) {
+                        tokenCnt++;
+                        while (tokenCnt < tokens.length && isNumeric(tokens[tokenCnt])) {
+                            info.interfaces.add(Integer.parseInt(tokens[tokenCnt]));
+                            tokenCnt++;
+                        }
+                    } else if ("source:".equals(tokens[tokenCnt])) {
+                        info.source = tokens[++tokenCnt];
+                    } else {
+                        throw new RuntimeException("Unknown input");
+                    }
+                    tokenCnt++;
+                }
+                return info;
+            } catch (Exception e) {
+                throw new RuntimeException("Invalid format of classlist line: \n\t\"" + line + "\"");
+            }
+        }
     }
 
     // The 'subList' is a segment of the original classlist that's produced by
@@ -146,14 +204,17 @@ public class CDSParallelPreProcessor {
     // The number of successfully loaded classes is tracked and returned.
     static int processSubList(List<String> subList) {
         int classNum = 0;
-        for (String name : subList) {
-            if (name.startsWith("#")) {
-                // Line starts with '#' is treated as comment and is ignored.
-            } else if (name.startsWith("[")) {
-                // Array is not support in classlist.
-                System.out.println("Preload Warning: Cannot find " + name);
-            } else {
-                String qualified_name = name.replace('/', '.');
+        for (String line : subList) {
+            CDSClassListLine info = parseClassListLine(line);
+            if (info.source == null) {
+                // Load classes for the boot/platform/app loaders only.
+                if (info.superId != CDSClassListLine.INVALID_ID) {
+                    throw new RuntimeException("If source location is not specified, super class must not be specified");
+                }
+                if (info.interfaces.size() > 0) {
+                    throw new RuntimeException("If source location is not specified, interface(s) must not be specified");
+                }
+                String qualifiedName = info.className;
                 Class<?> c = null;
                 try {
                     // First try loading the requested class by calling the
@@ -165,31 +226,68 @@ public class CDSParallelPreProcessor {
                     // - application classes with named module from the module
                     //   path
                     // - unnamed module classes from -Xbootclasspath/a:
-                    c = ClassLoader.getSystemClassLoader().loadClass(qualified_name);
+                    c = ClassLoader.getSystemClassLoader().loadClass(qualifiedName);
                 } catch (Throwable t) {
                     // Ignore any exception
                 }
 
                 try {
                     if (c == null) {
-                      // Additional classes with existing named modules defined
-                      // in the runtime modules image can be loaded from
-                      // -Xbootclasspath/a. That case is not handled by system
-                      // class loader's loadClass(). Call Class.forName() using
-                      // the null class loader explicitly to handle that.
-                      c = Class.forName(qualified_name, false, null);
+                        // Additional classes with existing named modules defined
+                        // in the runtime modules image can be loaded from
+                        // -Xbootclasspath/a. That case is not handled by system
+                        // class loader's loadClass(). Call Class.forName() using
+                        // the null class loader explicitly to handle that.
+                        c = Class.forName(qualifiedName, false, null);
                     }
                     preProcessClass(c);
-                    classNum ++;
+                    classNum++;
                 } catch (ClassNotFoundException | NoClassDefFoundError ex) {
-                    System.out.println("Preload Warning: Cannot find " + name);
+                    System.out.println("Preload Warning: Cannot find " + line);
                 } catch (UnsupportedClassVersionError err) {
                     // Error is already reported by the VM
                 }
+            } else {
+                // If "source:" tag is specified, all super class and super interfaces must be specified in the
+                // class list file.
+                loadClassFromSource(info);
+                classNum++;
             }
         }
         return classNum;
     }
 
     private static native void preProcessClass(Class<?> c);
+
+    private static native void preProcessClassWithSource(String className, String source, int interfaceCnt);
+
+    static class CDSClassListLine {
+        static final int INVALID_ID = -1;
+        String className;
+        String source;
+        int thisId;
+        int superId;
+        List<Integer> interfaces;
+
+        CDSClassListLine() {
+            className = null;
+            source = null;
+            thisId = INVALID_ID;
+            superId = INVALID_ID;
+            interfaces = new ArrayList<>();
+        }
+    }
+
+    private static class SubListProcessor implements Runnable {
+        List<String> classList;
+
+        SubListProcessor(List<String> list) {
+            classList = list;
+        }
+
+        @Override
+        public void run() {
+            updateClassCount(processSubList(classList));
+        }
+    }
 }
