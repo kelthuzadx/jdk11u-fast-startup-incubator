@@ -2490,6 +2490,30 @@ define_pd_global(uint64_t,MaxRAM,                    1ULL*G);
           "shared spaces, and dumps the shared spaces to a file to be "     \
           "used in future JVM runs")                                        \
                                                                             \
+  /* Google: Perform parallel class loading, linking and other          */  \
+  /*         parallel-capable preprocessing operations in different     */  \
+  /*         Java threads to speed up CDS archive creation. The number  */  \
+  /*         of Java threads is determined by DumpWithParallelism       */  \
+  /*         value. If DumpWithParallelism is 1, all CDS archiving      */  \
+  /*         operations are done using one thread.                      */  \
+  product(int, DumpWithParallelism, 4,                                      \
+          "Load and pre-process classes in parallel during CDS dumping")    \
+          range(1, 128)                                                     \
+  /* Google: DisableHeapObjectArchiving is currently a Google JVM */        \
+  /*         internal option. It is planned to upstream this to OpenJDK. */ \
+  product(bool, UseHeapObjectArchiving, true,                               \
+          "Use heap object archiving. Note that heap archiving is only "    \
+          "available with G1 GC, so this flag will only have an effect if " \
+          "G1 GC is enabled.")                                              \
+                                                                            \
+  /* Google: PreInitializeArchivedClass is a Google JVM internal option. */ \
+  /*         The flag can be used for comparing performance differences  */ \
+  /*         with and without the general class pre-initialization       */ \
+  /*         support. */                                                    \
+  product(bool, PreInitializeArchivedClass, true,                           \
+          "Support pre-initializing and preserving selected classes and "   \
+          "individual static fields during static CDS dump time.")          \
+                                                                            \
   product(bool, PrintSharedArchiveAndExit, false,                           \
           "Print shared archive file contents")                             \
                                                                             \
